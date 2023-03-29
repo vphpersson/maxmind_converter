@@ -7,76 +7,59 @@ from ipaddress import ip_network, IPv4Network, IPv6Network
 
 
 @dataclass
-class RangeEntry:
+class CountryRangeEntry:
     network: IPv4Network | IPv6Network
     country_iso_code: str | None = None
+
+
+@dataclass
+class ASNRangeEntry:
+    network: IPv4Network | IPv6Network
     as_number: int | None = None
     as_organization: str | None = None
 
 
-@dataclass
-class _ASNInfo:
-    as_number: int
-    as_organization: str
+def convert_asn_database(zip_file: ZipFile) -> list[ASNRangeEntry]:
+    directory_name: str = PurePath(next(iter(zip_file.filelist)).filename).parent.name
+
+    ipv4_csv_data: bytes = zip_file.read(name=f'{directory_name}/GeoLite2-ASN-Blocks-IPv4.csv')
+    ipv6_csv_data: bytes = zip_file.read(name=f'{directory_name}/GeoLite2-ASN-Blocks-IPv6.csv')
+
+    return [
+        ASNRangeEntry(
+            network=ip_network(address=row['network']),
+            as_number=row['autonomous_system_number'],
+            as_organization=row['autonomous_system_organization']
+        )
+        for data in (ipv4_csv_data, ipv6_csv_data)
+        for row in DictReader(TextIOWrapper(BytesIO(data), newline=''))
+    ]
 
 
-def convert_database(
-    country_database_zip_file: ZipFile,
-    asn_database_zip_file: ZipFile | None
-) -> list[RangeEntry]:
+def convert_country_database(zip_file: ZipFile) -> list[CountryRangeEntry]:
     """
 
-    :param country_database_zip_file
-    :param asn_database_zip_file
+    :param zip_file:
     :return: A list of entries of networks and their corresponding country ISO code.
     """
 
-    country_directory_name: str = PurePath(next(iter(country_database_zip_file.filelist)).filename).parent.name
+    directory_name: str = PurePath(next(iter(zip_file.filelist)).filename).parent.name
 
-    county_ipv4_csv_data: bytes = country_database_zip_file.read(
-        name=f'{country_directory_name}/GeoLite2-Country-Blocks-IPv4.csv'
-    )
-    county_ipv6_csv_data: bytes = country_database_zip_file.read(
-        name=f'{country_directory_name}/GeoLite2-Country-Blocks-IPv6.csv'
-    )
+    ipv4_csv_data: bytes = zip_file.read(name=f'{directory_name}/GeoLite2-Country-Blocks-IPv4.csv')
+    ipv6_csv_data: bytes = zip_file.read(name=f'{directory_name}/GeoLite2-Country-Blocks-IPv6.csv')
 
-    country_data: bytes = country_database_zip_file.read(
-        name=f'{country_directory_name}/GeoLite2-Country-Locations-en.csv'
-    )
+    country_data: bytes = zip_file.read(name=f'{directory_name}/GeoLite2-Country-Locations-en.csv')
 
     geoname_id_to_country_iso_code: dict[str, str] = {
         row['geoname_id']: row['country_iso_code']
         for row in DictReader(TextIOWrapper(BytesIO(country_data), newline=''))
     }
 
-    network_to_asn_info: dict[str, _ASNInfo] = {}
-    if asn_database_zip_file:
-        asn_directory_name: str = PurePath(next(iter(asn_database_zip_file.filelist)).filename).parent.name
-
-        asn_ipv4_csv_data: bytes = asn_database_zip_file.read(
-            name=f'{asn_directory_name}/GeoLite2-ASN-Blocks-IPv4.csv'
-        )
-        for row in DictReader(TextIOWrapper(BytesIO(asn_ipv4_csv_data), newline='')):
-            network_to_asn_info[row['network']] = _ASNInfo(
-                as_number=row['autonomous_system_number'],
-                as_organization=row['autonomous_system_organization']
-            )
-
-        asn_ipv6_csv_data: bytes = asn_database_zip_file.read(
-            name=f'{asn_directory_name}/GeoLite2-ASN-Blocks-IPv6.csv'
-        )
-        for row in DictReader(TextIOWrapper(BytesIO(asn_ipv6_csv_data), newline='')):
-            network_to_asn_info[row['network']] = _ASNInfo(
-                as_number=row['autonomous_system_number'],
-                as_organization=row['autonomous_system_organization']
-            )
-
     return [
-        RangeEntry(
+        CountryRangeEntry(
             network=ip_network(address=row['network']),
             country_iso_code=geoname_id_to_country_iso_code.get(row['geoname_id']),
-            **(asdict(as_info) if (as_info := network_to_asn_info.get(row['network'])) else {})
         )
-        for data in (county_ipv4_csv_data, county_ipv6_csv_data)
+        for data in (ipv4_csv_data, ipv6_csv_data)
         for row in DictReader(TextIOWrapper(BytesIO(data), newline=''))
     ]

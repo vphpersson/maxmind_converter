@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, FileType
 from typing import Any
 from ipaddress import IPv4Network, IPv6Network
 from asyncio import run as asyncio_run
@@ -12,7 +12,7 @@ from dataclasses import asdict
 from httpx import AsyncClient
 
 from maxmind_converter.download import download, RetrievalData
-from maxmind_converter import convert_asn_database, convert_country_database, ASNRangeEntry, CountryRangeEntry
+from maxmind_converter import convert_asn_database, convert_country_database
 
 
 class MaxmindConverterArgumentParser(ArgumentParser):
@@ -28,10 +28,19 @@ class MaxmindConverterArgumentParser(ArgumentParser):
 
         self.add_argument(
             'database',
-            choices=['asn', 'country']
+            choices=['asn', 'country'],
+            help='The type of database to retrieve and convert.'
         )
 
-        self.add_argument('--licence-key', required=True)
+        self.add_argument(
+            '--file',
+            type=FileType(mode='rb')
+        )
+
+        self.add_argument(
+            '--licence-key',
+            help='The licence key to use when retrieving the Maxmind database.'
+        )
 
 
 def json_dumps_default(obj: Any):
@@ -57,18 +66,26 @@ async def main():
         case _:
             raise ValueError(f'Unexpected database: {args.database}')
 
-    http_client_options = dict(
-        params=dict(
-            license_key=args.licence_key,
-            suffix='zip',
-            edition_id=edition_id
-        )
-    )
-    http_client: AsyncClient
-    async with AsyncClient(**http_client_options) as http_client:
-        retrieval_data: RetrievalData = await download(http_client=http_client)
+    if args.file:
+        file = args.file
+    else:
+        if not args.licence_key:
+            raise ValueError('A database cannot be downloaded without a licence key.')
 
-    with ZipFile(file=BytesIO(initial_bytes=retrieval_data.content), mode='r') as zip_file:
+        http_client_options = dict(
+            params=dict(
+                license_key=args.licence_key,
+                suffix='zip',
+                edition_id=edition_id
+            )
+        )
+        http_client: AsyncClient
+        async with AsyncClient(**http_client_options) as http_client:
+            retrieval_data: RetrievalData = await download(http_client=http_client)
+
+        file = BytesIO(initial_bytes=retrieval_data.content)
+
+    with ZipFile(file=file, mode='r') as zip_file:
         print(
             json_dumps(
                 list(map(asdict, convert_func(zip_file=zip_file))),
